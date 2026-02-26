@@ -1,29 +1,13 @@
 import aiohttp
-import uvicorn
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import StreamingResponse
-from youtubesearchpython.__future__ import VideosSearch
+import uvicorn
 
 app = FastAPI()
-
 API_BASE = "https://shrutibots.site"
 
 
-# =========================================================
-#                       UTIL
-# =========================================================
-
-def extract_video_id(url: str):
-    if "v=" in url:
-        return url.split("v=")[-1].split("&")[0]
-    elif "youtu.be/" in url:
-        return url.split("youtu.be/")[-1].split("?")[0]
-    return url.strip()
-
-
-# =========================================================
-#                       TOKEN
-# =========================================================
+# ---------------- TOKEN ---------------- #
 
 async def get_token(video_id: str, media_type: str):
     async with aiohttp.ClientSession() as session:
@@ -37,14 +21,18 @@ async def get_token(video_id: str, media_type: str):
             return data.get("download_token")
 
 
-# =========================================================
-#                       STREAM ENDPOINT
-# =========================================================
+# ---------------- STREAM ---------------- #
 
 @app.get("/stream")
 async def stream_video(request: Request, url: str, type: str = "video"):
 
-    video_id = extract_video_id(url)
+    # Extract video ID
+    if "v=" in url:
+        video_id = url.split("v=")[-1].split("&")[0]
+    elif "youtu.be/" in url:
+        video_id = url.split("youtu.be/")[-1].split("?")[0]
+    else:
+        video_id = url.strip()
 
     token = await get_token(video_id, type)
     if not token:
@@ -52,6 +40,7 @@ async def stream_video(request: Request, url: str, type: str = "video"):
 
     shruti_stream = f"{API_BASE}/stream/{video_id}?type={type}&token={token}"
 
+    # Forward Range header
     headers = {}
     if "range" in request.headers:
         headers["Range"] = request.headers["range"]
@@ -62,6 +51,7 @@ async def stream_video(request: Request, url: str, type: str = "video"):
         if upstream.status not in (200, 206):
             raise HTTPException(status_code=upstream.status)
 
+        # Copy important headers
         response_headers = {
             "Accept-Ranges": upstream.headers.get("Accept-Ranges", "bytes"),
             "Content-Length": upstream.headers.get("Content-Length"),
@@ -80,43 +70,7 @@ async def stream_video(request: Request, url: str, type: str = "video"):
         )
 
 
-# =========================================================
-#                 FULL VIDEO INFO ENDPOINT
-# =========================================================
-
-@app.get("/info")
-async def full_video_info(url: str):
-
-    video_id = extract_video_id(url)
-
-    try:
-        search = VideosSearch(video_id, limit=1)
-        data = await search.next()
-        result = data["result"][0]
-    except Exception:
-        raise HTTPException(status_code=404, detail="Video not found")
-
-    return {
-        "video_id": video_id,
-        "raw_library_response": result,
-        "all_thumbnails": result.get("thumbnails"),
-        "channel_full_object": result.get("channel"),
-        "accessibility": result.get("accessibility"),
-        "description_snippet": result.get("descriptionSnippet"),
-        "rich_thumbnail": result.get("richThumbnail"),
-        "published_time": result.get("publishedTime"),
-        "view_count_object": result.get("viewCount"),
-        "duration": result.get("duration"),
-        "is_live": result.get("isLive"),
-        "badges": result.get("badges"),
-        "link": result.get("link"),
-        "title": result.get("title"),
-    }
-
-
-# =========================================================
-#                       MAIN
-# =========================================================
+# ---------------- MAIN ---------------- #
 
 if __name__ == "__main__":
     uvicorn.run("stream_server:app", host="0.0.0.0", port=8000, reload=False)
