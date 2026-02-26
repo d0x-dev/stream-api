@@ -40,35 +40,39 @@ async def stream_video(request: Request, url: str, type: str = "video"):
 
     shruti_stream = f"{API_BASE}/stream/{video_id}?type={type}&token={token}"
 
-    # Forward Range header
     headers = {}
     if "range" in request.headers:
         headers["Range"] = request.headers["range"]
 
-    async with aiohttp.ClientSession() as session:
-        upstream = await session.get(shruti_stream, headers=headers)
+    session = aiohttp.ClientSession()
+    upstream = await session.get(shruti_stream, headers=headers)
 
-        if upstream.status not in (200, 206):
-            raise HTTPException(status_code=upstream.status)
+    if upstream.status not in (200, 206):
+        await session.close()
+        raise HTTPException(status_code=upstream.status)
 
-        # Copy important headers
-        response_headers = {
-            "Accept-Ranges": upstream.headers.get("Accept-Ranges", "bytes"),
-            "Content-Length": upstream.headers.get("Content-Length"),
-            "Content-Range": upstream.headers.get("Content-Range"),
-            "Content-Type": upstream.headers.get("Content-Type", "video/mp4"),
-        }
+    response_headers = {
+        "Accept-Ranges": upstream.headers.get("Accept-Ranges", "bytes"),
+        "Content-Length": upstream.headers.get("Content-Length"),
+        "Content-Range": upstream.headers.get("Content-Range"),
+        "Content-Type": upstream.headers.get("Content-Type", "video/mp4"),
+    }
 
-        async def stream_generator():
+    async def stream_generator():
+        try:
             async for chunk in upstream.content.iter_chunked(1024 * 512):
                 yield chunk
+        except Exception:
+            pass
+        finally:
+            await upstream.release()
+            await session.close()
 
-        return StreamingResponse(
-            stream_generator(),
-            status_code=upstream.status,
-            headers={k: v for k, v in response_headers.items() if v},
-        )
-
+    return StreamingResponse(
+        stream_generator(),
+        status_code=upstream.status,
+        headers={k: v for k, v in response_headers.items() if v},
+    )
 
 # ---------------- MAIN ---------------- #
 
